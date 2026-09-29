@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Ticket Check-In</title>
+
+  <!-- QR scanner library. GitHub Pages serves this page over HTTPS. -->
+  <script src="https://unpkg.com/html5-qrcode"></script>
+
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 18px;
+      padding-top: max(18px, env(safe-area-inset-top));
+      padding-bottom: max(18px, env(safe-area-inset-bottom));
+      background: #f1f5f9;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+      color: #172033;
+    }
+
+    .container {
+      max-width: 520px;
+      margin: 0 auto;
+      background: #fff;
+      padding: 22px;
+      border-radius: 20px;
+      box-shadow: 0 6px 30px rgba(0,0,0,.08);
+    }
+
+    h1 {
+      text-align: center;
+      margin: 4px 0 6px;
+      font-size: 32px;
+    }
+
+    .subtitle {
+      text-align: center;
+      color: #64748b;
+      margin-bottom: 20px;
+    }
+
+    #reader {
+      width: 100%;
+      overflow: hidden;
+      border-radius: 14px;
+      background: #0f172a;
+      min-height: 80px;
+    }
+
+    .button {
+      display: block;
+      width: 100%;
+      padding: 15px;
+      margin-top: 14px;
+      border: 0;
+      border-radius: 11px;
+      background: #2563eb;
+      color: white;
+      font-size: 17px;
+      font-weight: 700;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .button:disabled {
+      opacity: .55;
+    }
+
+    .secondary {
+      background: #475569;
+    }
+
+    #result {
+      margin-top: 18px;
+      padding: 17px;
+      border-radius: 13px;
+      display: none;
+      overflow-wrap: anywhere;
+      font-size: 16px;
+    }
+
+    .good { background: #dcfce7; color: #166534; }
+    .bad { background: #fee2e2; color: #991b1b; }
+    .warning { background: #fef3c7; color: #92400e; }
+    .info { background: #dbeafe; color: #1e40af; }
+
+    .guest {
+      margin-top: 10px;
+      line-height: 1.8;
+    }
+
+    .manual {
+      margin-top: 22px;
+      border-top: 1px solid #e2e8f0;
+      padding-top: 20px;
+    }
+
+    input {
+      width: 100%;
+      padding: 14px;
+      border: 1px solid #cbd5e1;
+      border-radius: 10px;
+      font-size: 17px;
+      outline: none;
+    }
+
+    input:focus {
+      border-color: #2563eb;
+    }
+
+    .small {
+      font-size: 12px;
+      color: #64748b;
+      text-align: center;
+      margin-top: 18px;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <h1>🎟️ Ticket Check-In</h1>
+    <div class="subtitle">Scan a guest's QR ticket</div>
+
+    <div id="reader"></div>
+
+    <button id="startBtn" class="button" onclick="startScanner()">
+      📷 Start QR Scanner
+    </button>
+
+    <button id="stopBtn" class="button secondary hidden" onclick="stopScanner()">
+      Stop Scanner
+    </button>
+
+    <div id="result"></div>
+
+    <div class="manual">
+      <label for="ticketInput"><b>Manual ticket code</b></label>
+      <br><br>
+      <input id="ticketInput"
+             placeholder="e.g. TKT001"
+             autocomplete="off"
+             autocapitalize="characters">
+      <button class="button" onclick="manualCheck()">
+        Verify Ticket
+      </button>
+    </div>
+
+    <div class="small">
+      Each valid ticket can be checked in only once.
+    </div>
+  </div>
+
+  <script>
+    const API_URL =
+      "https://script.google.com/macros/s/AKfycbxa3y9sOCU3nq4LrkksBzRff6x9aZVelOpnOjdBDis4WPTrj4dW___fYGVYPMzIt0zx/exec";
+
+    let scanner = null;
+    let scannerRunning = false;
+    let busy = false;
+    let lastScan = "";
+    let scanResetTimer = null;
+
+    const resultBox = document.getElementById("result");
+    const startBtn = document.getElementById("startBtn");
+    const stopBtn = document.getElementById("stopBtn");
+
+    function escapeHtml(value) {
+      return String(value == null ? "" : value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function showResult(data) {
+      resultBox.style.display = "block";
+
+      if (data.success) {
+        resultBox.className = "good";
+      } else if (data.duplicate) {
+        resultBox.className = "warning";
+      } else {
+        resultBox.className = "bad";
+      }
+
+      let html = "<b>" + escapeHtml(data.message) + "</b>";
+
+      if (data.name) {
+        html += '<div class="guest">';
+        html += "Name: " + escapeHtml(data.name) + "<br>";
+
+        if (data.ticketCode) {
+          html += "Ticket: " + escapeHtml(data.ticketCode) + "<br>";
+        }
+
+        if (data.mobile) {
+          html += "Mobile: " + escapeHtml(data.mobile) + "<br>";
+        }
+
+        if (data.time) {
+          html += "Time: " + escapeHtml(data.time);
+        }
+
+        if (data.status) {
+          html += "<br>Status: " + escapeHtml(data.status);
+        }
+
+        html += "</div>";
+      }
+
+      resultBox.innerHTML = html;
+    }
+
+    function showInfo(message) {
+      resultBox.style.display = "block";
+      resultBox.className = "info";
+      resultBox.textContent = message;
+    }
+
+    function setScannerButtons(running) {
+      scannerRunning = running;
+
+      if (running) {
+        startBtn.textContent = "Scanner Active";
+        stopBtn.classList.remove("hidden");
+      } else {
+        startBtn.textContent = "📷 Start QR Scanner";
+        stopBtn.classList.add("hidden");
+      }
+    }
+
+    async function startScanner() {
+      if (busy) return;
+
+      if (scanner && scannerRunning) {
+        showInfo("Scanner is already active.");
+        return;
+      }
+
+      try {
+        if (!scanner) {
+          scanner = new Html5Qrcode("reader");
+        }
+
+        showInfo("Starting camera...");
+
+        await scanner.start(
+          { facingMode: { exact: "environment" } },
+          {
+            fps: 10,
+            qrbox: function(viewfinderWidth, viewfinderHeight) {
+              const size = Math.floor(
+                Math.min(viewfinderWidth, viewfinderHeight) * 0.70
+              );
+              return { width: size, height: size };
+            },
+            aspectRatio: 1.0
+          },
+          onScanSuccess,
+          function() {}
+        );
+
+        setScannerButtons(true);
+        resultBox.style.display = "none";
+
+      } catch (error) {
+        // Some browsers reject exact environment-facing mode.
+        // Retry with the simpler facingMode constraint.
+        try {
+          if (scanner) {
+            try { await scanner.clear(); } catch (_) {}
+          }
+
+          scanner = new Html5Qrcode("reader");
+
+          await scanner.start(
+            { facingMode: "environment" },
+            {
+              fps: 10,
+              qrbox: { width: 240, height: 240 },
+              aspectRatio: 1.0
+            },
+            onScanSuccess,
+            function() {}
+          );
+
+          setScannerButtons(true);
+          resultBox.style.display = "none";
+
+        } catch (secondError) {
+          setScannerButtons(false);
+
+          showResult({
+            success: false,
+            message:
+              "Camera could not start. Make sure you opened this page in Safari over HTTPS and allowed Camera access. " +
+              (secondError.message || secondError)
+          });
+        }
+      }
+    }
+
+    async function stopScanner() {
+      if (!scanner) return;
+
+      try {
+        if (scannerRunning) {
+          await scanner.stop();
+        }
+      } catch (_) {}
+
+      try {
+        await scanner.clear();
+      } catch (_) {}
+
+      scanner = null;
+      setScannerButtons(false);
+    }
+
+    async function pauseScanner() {
+      if (!scanner || !scannerRunning) return;
+
+      try {
+        scanner.pause(true);
+      } catch (_) {}
+    }
+
+    async function resumeScanner() {
+      if (!scanner || !scannerRunning) return;
+
+      try {
+        scanner.resume();
+      } catch (_) {}
+    }
+
+    function onScanSuccess(decodedText) {
+      if (busy) return;
+
+      const value = String(decodedText || "").trim();
+      if (!value) return;
+
+      // Prevent the same QR from firing repeatedly.
+      if (value === lastScan) return;
+
+      lastScan = value;
+      clearTimeout(scanResetTimer);
+
+      pauseScanner();
+      verifyTicket(value);
+    }
+
+    /*
+     * JSONP is used intentionally.
+     * Apps Script does not provide the CORS response headers needed for a
+     * normal cross-origin fetch from GitHub Pages. A script tag can receive
+     * the JSONP response from the Apps Script web app.
+     */
+    function verifyTicket(value) {
+      if (busy) return;
+
+      busy = true;
+      startBtn.disabled = true;
+
+      showInfo("Checking ticket against the guest list...");
+
+      const callbackName =
+        "ticketCallback_" + Date.now() + "_" +
+        Math.floor(Math.random() * 100000);
+
+      let finished = false;
+
+      function finish() {
+        if (finished) return;
+        finished = true;
+
+        startBtn.disabled = false;
+
+        const script = document.getElementById(callbackName);
+        if (script) script.remove();
+
+        try {
+          delete window[callbackName];
+        } catch (_) {}
+
+        busy = false;
+
+        // Allow the same ticket to be scanned again later and let the
+        // backend return "ALREADY CHECKED IN".
+        scanResetTimer = setTimeout(function() {
+          lastScan = "";
+        }, 1200);
+
+        resumeScanner();
+      }
+
+      window[callbackName] = function(data) {
+        showResult(data);
+        finish();
+      };
+
+      const script = document.createElement("script");
+      script.id = callbackName;
+      script.src =
+        API_URL +
+        "?action=check" +
+        "&ticket=" + encodeURIComponent(value) +
+        "&callback=" + encodeURIComponent(callbackName);
+
+      script.onerror = function() {
+        showResult({
+          success: false,
+          message: "Could not connect to the ticket server."
+        });
+        finish();
+      };
+
+      document.body.appendChild(script);
+
+      // Timeout so the screen never gets stuck.
+      setTimeout(function() {
+        if (!finished) {
+          showResult({
+            success: false,
+            message: "The ticket server did not respond. Please try again."
+          });
+          finish();
+        }
+      }, 15000);
+    }
+
+    function manualCheck() {
+      const value = document.getElementById("ticketInput")
+        .value.trim();
+
+      if (!value) {
+        showResult({
+          success: false,
+          message: "Enter a ticket code first."
+        });
+        return;
+      }
+
+      verifyTicket(value);
+    }
+
+    document.getElementById("ticketInput").addEventListener(
+      "keydown",
+      function(event) {
+        if (event.key === "Enter") {
+          manualCheck();
+        }
+      }
+    );
+  </script>
+</body>
+</html>
